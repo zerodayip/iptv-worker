@@ -145,43 +145,16 @@ export default {
         }
 
         if (action === "get_live_streams") {
-          // Her stream'in direct_source linkini alıp proxy ve sadece ilk segmentin linkini al
-          const updatedStreams = await Promise.all(streams.map(async (stream) => {
-            try {
-              const playlistResp = await fetch(stream.direct_source);
-              if (!playlistResp.ok) throw new Error("Playlist fetch failed");
+          // URL decode yapıyoruz ki IPTV player düzgün göstersin
+          const decodedStreams = streams.map(stream => {
+            return {
+              ...stream,
+              direct_source: decodeURIComponent(stream.direct_source),
+              stream_url: decodeURIComponent(stream.stream_url),
+            };
+          });
 
-              let playlistText = await playlistResp.text();
-
-              // Proxy linklerini güncelle
-              playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
-
-              const lines = playlistText.split(/\r?\n/);
-              const firstSegmentIndex = lines.findIndex(line => line.startsWith("#EXTINF"));
-              let firstSegmentURL = "";
-
-              if (firstSegmentIndex !== -1 && lines.length > firstSegmentIndex + 1) {
-                const candidate = lines[firstSegmentIndex + 1].trim();
-                if (candidate.startsWith("http")) {
-                  firstSegmentURL = candidate;
-                }
-              }
-
-              return {
-                ...stream,
-                stream_url: firstSegmentURL || stream.direct_source,
-                direct_source: firstSegmentURL || stream.direct_source
-              };
-            } catch {
-              return {
-                ...stream,
-                stream_url: stream.direct_source,
-                direct_source: stream.direct_source
-              };
-            }
-          }));
-
-          return new Response(JSON.stringify(updatedStreams), {
+          return new Response(JSON.stringify(decodedStreams), {
             headers: { "Content-Type": "application/json" }
           });
         }
