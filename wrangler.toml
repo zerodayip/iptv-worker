@@ -1,13 +1,9 @@
 name = "iptv-worker"
 main = "src/index.js"
-compatibility_date = "2025-05-23"
-# env secret olarak GH_TOKEN tanımlı, kodda doğrudan yazma
+compatibility_date = "2025-04-24"
+workers_dev = true
 
-[vars]
-# Varsayılan değişkenler, genelde kullanılmıyor çünkü GH_TOKEN secret olarak var.
-
-[build]
-command = ""
-
-[triggers]
-# Eğer otomatik tetikleme gerekiyorsa buraya yazılır
+[env.production]
+bindings = [
+  { name = "GH_TOKEN", type = "secret" }
+]
