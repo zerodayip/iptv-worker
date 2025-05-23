@@ -1,5 +1,5 @@
-const M3U_URL = "https://raw.githubusercontent.com/zerodayip/Py/main/m3u8/playlist2.m3u";
-const USERS_URL = "https://raw.githubusercontent.com/zerodayip/denemeler/main/users.json";
+const M3U_URL = "https://raw.githubusercontent.com/zerodayip/Py/refs/heads/main/m3u8/playlist2.m3u";
+const USERS_URL = "https://raw.githubusercontent.com/zerodayip/denemeler/refs/heads/main/users.json";
 
 function m3uToJsonAndCategories(text) {
   const lines = text.split(/\r?\n/);
