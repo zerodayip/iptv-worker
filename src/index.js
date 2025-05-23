@@ -147,7 +147,7 @@ export default {
 
         if (action === "get_live_streams") {
           const updatedStreams = streams.map(stream => {
-            const streamUrl = `https://${host}/player_api.php?username=${username}&password=${password}&action=stream&stream_id=${stream.stream_id}.m3u8`;
+            const streamUrl = `https://${host}/player_api.php?username=${username}&password=${password}&action=stream&stream_id=${stream.stream_id}`;
             return {
               ...stream,
               direct_source: streamUrl,
