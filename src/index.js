@@ -1,5 +1,5 @@
-const M3U_URL = M3U_URL || "";
-const USERS_URL = USERS_URL || "";
+const M3U_URL = "https://raw.githubusercontent.com/zerodayip/Py/main/m3u8/playlist2.m3u";
+const USERS_URL = "https://raw.githubusercontent.com/zerodayip/denemeler/main/users.json";
 
 function m3uToJsonAndCategories(text) {
   const lines = text.split(/\r?\n/);
@@ -17,7 +17,14 @@ function m3uToJsonAndCategories(text) {
       const logoMatch = lines[i].match(/tvg-logo="([^"]*)"/);
       const icon = logoMatch ? logoMatch[1] : "";
 
-      const url = lines[i + 1] || "";
+      const vlcOpts = [];
+      let j = i + 1;
+      while (lines[j] && lines[j].startsWith("#EXTVLCOPT:")) {
+        vlcOpts.push(lines[j]);
+        j++;
+      }
+
+      const url = lines[j] || "";
 
       streams.push({
         num: streams.length + 1,
@@ -29,10 +36,11 @@ function m3uToJsonAndCategories(text) {
         tv_archive: "0",
         direct_source: url.trim(),
         stream_url: url.trim(),
+        vlc_opts: vlcOpts,
         container_extension: "m3u8"
       });
 
-      i += 1;
+      i = j;
     }
   }
 
@@ -46,10 +54,11 @@ function m3uToJsonAndCategories(text) {
 }
 
 async function auth(username, password, env) {
-  const ghHeader = { Authorization: `Bearer ${env.GH_TOKEN}` };
-  const usersResp = await fetch(USERS_URL, { headers: ghHeader });
+  // users.json anonim erişime açıksa header olmadan fetch yap
+  const usersResp = await fetch(USERS_URL);
   if (!usersResp.ok) throw new Error("User list error");
   const users = await usersResp.json();
+
   const user = Object.values(users).find(u => u.username === username && u.password === password);
   if (!user) return { ok: false, code: 403 };
   if (Date.now() > Date.parse(user.expire_date)) return { ok: false, code: 402, exp: user.expire_date };
@@ -61,10 +70,9 @@ export default {
     try {
       const { pathname, searchParams } = new URL(request.url);
 
-      const username = searchParams.get("username");
-      const password = searchParams.get("password");
-
       if (pathname === "/get.php") {
+        const username = searchParams.get("username");
+        const password = searchParams.get("password");
         const type = (searchParams.get("type") || "m3u").toLowerCase();
         if (!username || !password || !/^m3u(_plus)?$/.test(type))
           return new Response("Missing or wrong parameters", { status: 400 });
@@ -72,14 +80,13 @@ export default {
         const authRes = await auth(username, password, env);
         if (!authRes.ok) {
           if (authRes.code === 402)
-            return new Response("#EXTM3U\n#EXTINF:-1,Abonelik süresi doldu\n", {
+            return new Response("#EXTM3U\n#EXTINF:-1,Abonelik süre doldu\n", {
               headers: { "Content-Type": "text/plain; charset=utf-8" }
             });
           return new Response("Invalid login", { status: authRes.code });
         }
 
-        const ghHeader = { Authorization: `Bearer ${env.GH_TOKEN}` };
-        const m3uResp = await fetch(M3U_URL, { headers: ghHeader });
+        const m3uResp = await fetch(M3U_URL);
         if (!m3uResp.ok) return new Response("Upstream error", { status: 502 });
 
         return new Response(await m3uResp.text(), {
@@ -88,22 +95,24 @@ export default {
       }
 
       if (pathname === "/player_api.php") {
+        const username = searchParams.get("username");
+        const password = searchParams.get("password");
         const action = (searchParams.get("action") || "").toLowerCase();
 
         if (!username || !password) return new Response("[]", { status: 400 });
         const authRes = await auth(username, password, env);
         if (!authRes.ok) return new Response("[]", { status: authRes.code });
 
-        const ghHeader = { Authorization: `Bearer ${env.GH_TOKEN}` };
-        const m3uResp = await fetch(M3U_URL, { headers: ghHeader });
+        const m3uResp = await fetch(M3U_URL);
         if (!m3uResp.ok) return new Response("[]", { status: 502 });
         const text = await m3uResp.text();
+
         const { streams, categories } = m3uToJsonAndCategories(text);
 
         if (!action) {
           const expTS = Math.floor(Date.parse(authRes.exp) / 1000);
           const nowTS = Math.floor(Date.now() / 1000);
-          return new Response(JSON.stringify({
+          const payload = {
             user_info: {
               username,
               password,
@@ -122,7 +131,8 @@ export default {
               timestamp_now: nowTS,
               timezone: "Europe/Istanbul"
             }
-          }), {
+          };
+          return new Response(JSON.stringify(payload), {
             headers: { "Content-Type": "application/json" }
           });
         }
@@ -134,11 +144,39 @@ export default {
         }
 
         if (action === "get_live_streams") {
-          const base = new URL(request.url).origin;
-          const updatedStreams = streams.map(s => ({
-            ...s,
-            stream_url: `${base}/player_api.php?username=${username}&password=${password}&action=stream&stream_id=${s.stream_id}`,
-            direct_source: `${base}/player_api.php?username=${username}&password=${password}&action=stream&stream_id=${s.stream_id}`
+          const updatedStreams = await Promise.all(streams.map(async (stream) => {
+            try {
+              const playlistResp = await fetch(stream.direct_source);
+              if (!playlistResp.ok) throw new Error("Playlist fetch failed");
+
+              let playlistText = await playlistResp.text();
+
+              // Proxy linkleri varsa güncelle (isteğe bağlı)
+              playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
+
+              const lines = playlistText.split(/\r?\n/);
+              const firstSegmentIndex = lines.findIndex(line => line.startsWith("#EXTINF"));
+              let firstSegmentURL = "";
+
+              if (firstSegmentIndex !== -1 && lines.length > firstSegmentIndex + 1) {
+                const candidate = lines[firstSegmentIndex + 1].trim();
+                if (candidate.startsWith("http")) {
+                  firstSegmentURL = candidate;
+                }
+              }
+
+              return {
+                ...stream,
+                stream_url: firstSegmentURL || stream.direct_source,
+                direct_source: firstSegmentURL || stream.direct_source
+              };
+            } catch {
+              return {
+                ...stream,
+                stream_url: stream.direct_source,
+                direct_source: stream.direct_source
+              };
+            }
           }));
 
           return new Response(JSON.stringify(updatedStreams), {
@@ -149,13 +187,17 @@ export default {
         if (action === "stream") {
           const streamId = parseInt(searchParams.get("stream_id"));
           if (isNaN(streamId)) return new Response("Missing stream_id", { status: 400 });
-          const targetStream = streams.find(s => s.stream_id === streamId);
-          if (!targetStream) return new Response("Not Found", { status: 404 });
 
-          const upstream = await fetch(targetStream.direct_source);
-          if (!upstream.ok) return new Response("Upstream error", { status: 502 });
+          const stream = streams.find(s => s.stream_id === streamId);
+          if (!stream) return new Response("Not Found", { status: 404 });
 
-          return new Response(await upstream.text(), {
+          const playlistResp = await fetch(stream.direct_source);
+          if (!playlistResp.ok) return new Response("Playlist resolve error", { status: 502 });
+          let playlistText = await playlistResp.text();
+
+          playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
+
+          return new Response(playlistText, {
             headers: { "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8" }
           });
         }
