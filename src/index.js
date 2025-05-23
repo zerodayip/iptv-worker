@@ -145,12 +145,43 @@ export default {
         }
 
         if (action === "get_live_streams") {
-          const decodedStreams = streams.map(stream => ({
-            ...stream,
-            direct_source: decodeURIComponent(stream.direct_source),
-            stream_url: decodeURIComponent(stream.stream_url),
+          // Her stream'in direct_source linkini alıp proxy ve sadece ilk segmentin linkini al
+          const updatedStreams = await Promise.all(streams.map(async (stream) => {
+            try {
+              const playlistResp = await fetch(stream.direct_source);
+              if (!playlistResp.ok) throw new Error("Playlist fetch failed");
+
+              let playlistText = await playlistResp.text();
+
+              // Proxy linklerini güncelle
+              playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
+
+              const lines = playlistText.split(/\r?\n/);
+              const firstSegmentIndex = lines.findIndex(line => line.startsWith("#EXTINF"));
+              let firstSegmentURL = "";
+
+              if (firstSegmentIndex !== -1 && lines.length > firstSegmentIndex + 1) {
+                const candidate = lines[firstSegmentIndex + 1].trim();
+                if (candidate.startsWith("http")) {
+                  firstSegmentURL = candidate;
+                }
+              }
+
+              return {
+                ...stream,
+                stream_url: firstSegmentURL || stream.direct_source,
+                direct_source: firstSegmentURL || stream.direct_source
+              };
+            } catch {
+              return {
+                ...stream,
+                stream_url: stream.direct_source,
+                direct_source: stream.direct_source
+              };
+            }
           }));
-          return new Response(JSON.stringify(decodedStreams), {
+
+          return new Response(JSON.stringify(updatedStreams), {
             headers: { "Content-Type": "application/json" }
           });
         }
@@ -162,22 +193,15 @@ export default {
           const stream = streams.find(s => s.stream_id === streamId);
           if (!stream) return new Response("Not Found", { status: 404 });
 
-          const headers = {};
-          for (const opt of stream.vlc_opts) {
-            const match = opt.match(/^#EXTVLCOPT:(.+?)=(.+)$/);
-            if (match) {
-              const [, key, value] = match;
-              if (key === "http-user-agent") headers["User-Agent"] = value;
-              else if (key === "http-referrer") headers["Referer"] = value;
-              else if (key === "http-origin") headers["Origin"] = value;
-            }
-          }
-
-          const playlistResp = await fetch(stream.direct_source, { headers });
+          // Orijinal playlist'i çek
+          const playlistResp = await fetch(stream.direct_source);
           if (!playlistResp.ok) return new Response("Playlist resolve error", { status: 502 });
+          let playlistText = await playlistResp.text();
 
-          const playlistText = await playlistResp.text();
+          // Proxy linklerini güncelle
+          playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
 
+          // M3U8 playlist olarak dön
           return new Response(playlistText, {
             headers: { "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8" }
           });
