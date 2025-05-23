@@ -199,7 +199,7 @@ export default {
           let playlistText = await playlistResp.text();
 
           // Proxy linklerini güncelle
-          playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
+          playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-zeroipday.hf.space$1");
 
           // M3U8 playlist olarak dön
           return new Response(playlistText, {
