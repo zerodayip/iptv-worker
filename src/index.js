@@ -145,7 +145,7 @@ export default {
         }
 
         if (action === "get_live_streams") {
-          // Her stream'in direct_source linkini alıp ilk segment linkini bul ve onunla güncelle
+          // Her stream'in direct_source linkini alıp proxy ve sadece ilk segmentin linkini al
           const updatedStreams = await Promise.all(streams.map(async (stream) => {
             try {
               const playlistResp = await fetch(stream.direct_source);
@@ -154,7 +154,7 @@ export default {
               let playlistText = await playlistResp.text();
 
               // Proxy linklerini güncelle
-              playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
+              playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-zeroipday.hf.space$1");
 
               const lines = playlistText.split(/\r?\n/);
               const firstSegmentIndex = lines.findIndex(line => line.startsWith("#EXTINF"));
@@ -187,16 +187,18 @@ export default {
         }
 
         if (action === "stream") {
-          // Direkt stream linkini veriyoruz, yani zaten işlem tamamlandı, JSON içinden stream_id ile bul
           const streamId = parseInt(searchParams.get("stream_id"));
           if (isNaN(streamId)) return new Response("Missing stream_id", { status: 400 });
 
           const stream = streams.find(s => s.stream_id === streamId);
           if (!stream) return new Response("Not Found", { status: 404 });
 
-          // stream_url olarak güncel link zaten hazır, bunu direkt ver
-          // (Opsiyonel: İstersen burda da orijinal playlist'i çekip proxy işlemi yapabilirsin, ben basit tuttum)
-          return new Response(stream.stream_url, {
+          // Burada ORİJİNAL playlist fetch ve proxy düzenleme kodu aynen KALDI ama
+          // Response olarak sadece dış linki dönüyoruz.
+
+          const redirectURL = `https://iptv-worker.zeroipday.workers.dev/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=stream&stream_id=${streamId}`;
+
+          return new Response(redirectURL, {
             headers: { "Content-Type": "text/plain; charset=utf-8" }
           });
         }
