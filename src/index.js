@@ -35,7 +35,6 @@ function m3uToJsonAndCategories(text) {
         category_id: String(categoriesMap[categoryName]),
         tv_archive: "0",
         direct_source: url.trim(),
-        stream_url: url.trim(),
         vlc_opts: vlcOpts,
         container_extension: "m3u8"
       });
@@ -67,7 +66,7 @@ async function auth(username, password, env) {
 export default {
   async fetch(request, env) {
     try {
-      const { pathname, searchParams } = new URL(request.url);
+      const { pathname, searchParams, host } = new URL(request.url);
 
       if (pathname === "/get.php") {
         const username = searchParams.get("username");
@@ -79,7 +78,7 @@ export default {
         const authRes = await auth(username, password, env);
         if (!authRes.ok) {
           if (authRes.code === 402)
-            return new Response("#EXTM3U\n#EXTINF:-1,Abonelik süre doldu\n", {
+            return new Response("#EXTM3U\n#EXTINF:-1,Abonelik süresi doldu\n", {
               headers: { "Content-Type": "text/plain; charset=utf-8" }
             });
           return new Response("Invalid login", { status: authRes.code });
@@ -145,41 +144,12 @@ export default {
         }
 
         if (action === "get_live_streams") {
-          // Her stream'in direct_source linkini alıp proxy ve sadece ilk segmentin linkini al
-          const updatedStreams = await Promise.all(streams.map(async (stream) => {
-            try {
-              const playlistResp = await fetch(stream.direct_source);
-              if (!playlistResp.ok) throw new Error("Playlist fetch failed");
-
-              let playlistText = await playlistResp.text();
-
-              // Proxy linklerini güncelle
-              playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-zeroipday.hf.space$1");
-
-              const lines = playlistText.split(/\r?\n/);
-              const firstSegmentIndex = lines.findIndex(line => line.startsWith("#EXTINF"));
-              let firstSegmentURL = "";
-
-              if (firstSegmentIndex !== -1 && lines.length > firstSegmentIndex + 1) {
-                const candidate = lines[firstSegmentIndex + 1].trim();
-                if (candidate.startsWith("http")) {
-                  firstSegmentURL = candidate;
-                }
-              }
-
-              return {
-                ...stream,
-                stream_url: firstSegmentURL || stream.direct_source,
-                direct_source: firstSegmentURL || stream.direct_source
-              };
-            } catch {
-              return {
-                ...stream,
-                stream_url: stream.direct_source,
-                direct_source: stream.direct_source
-              };
-            }
-          }));
+          const updatedStreams = streams.map(stream => {
+            return {
+              ...stream,
+              stream_url: `https://${new URL(request.url).host}/player_api.php?username=${username}&password=${password}&action=stream&stream_id=${stream.stream_id}.m3u8`
+            };
+          });
 
           return new Response(JSON.stringify(updatedStreams), {
             headers: { "Content-Type": "application/json" }
@@ -187,19 +157,36 @@ export default {
         }
 
         if (action === "stream") {
-          const streamId = parseInt(searchParams.get("stream_id"));
+          const streamIdRaw = searchParams.get("stream_id");
+          const streamId = parseInt(streamIdRaw);
           if (isNaN(streamId)) return new Response("Missing stream_id", { status: 400 });
 
           const stream = streams.find(s => s.stream_id === streamId);
           if (!stream) return new Response("Not Found", { status: 404 });
 
-          // Burada ORİJİNAL playlist fetch ve proxy düzenleme kodu aynen KALDI ama
-          // Response olarak sadece dış linki dönüyoruz.
+          const playlistResp = await fetch(stream.direct_source);
+          if (!playlistResp.ok) return new Response("Playlist resolve error", { status: 502 });
+          let playlistText = await playlistResp.text();
 
-          const redirectURL = `https://iptv-worker.zeroipday.workers.dev/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=stream&stream_id=${streamId}`;
+          playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-zeroipday.hf.space$1");
 
-          return new Response(redirectURL, {
-            headers: { "Content-Type": "text/plain; charset=utf-8" }
+          const lines = playlistText.split(/\r?\n/);
+          const segmentIndex = lines.findIndex(line => line.startsWith("#EXTINF"));
+          let realLink = "";
+          if (segmentIndex !== -1 && lines[segmentIndex + 1]) {
+            const candidate = lines[segmentIndex + 1].trim();
+            if (candidate.startsWith("http")) {
+              realLink = candidate;
+            }
+          }
+
+          const m3u8 = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-STREAM-INF:BANDWIDTH=800000
+${realLink}`;
+
+          return new Response(m3u8, {
+            headers: { "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8" }
           });
         }
 
