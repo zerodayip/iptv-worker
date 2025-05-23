@@ -145,15 +145,11 @@ export default {
         }
 
         if (action === "get_live_streams") {
-          // URL decode yapıyoruz ki IPTV player düzgün göstersin
-          const decodedStreams = streams.map(stream => {
-            return {
-              ...stream,
-              direct_source: decodeURIComponent(stream.direct_source),
-              stream_url: decodeURIComponent(stream.stream_url),
-            };
-          });
-
+          const decodedStreams = streams.map(stream => ({
+            ...stream,
+            direct_source: decodeURIComponent(stream.direct_source),
+            stream_url: decodeURIComponent(stream.stream_url),
+          }));
           return new Response(JSON.stringify(decodedStreams), {
             headers: { "Content-Type": "application/json" }
           });
@@ -166,15 +162,22 @@ export default {
           const stream = streams.find(s => s.stream_id === streamId);
           if (!stream) return new Response("Not Found", { status: 404 });
 
-          // Orijinal playlist'i çek
-          const playlistResp = await fetch(stream.direct_source);
+          const headers = {};
+          for (const opt of stream.vlc_opts) {
+            const match = opt.match(/^#EXTVLCOPT:(.+?)=(.+)$/);
+            if (match) {
+              const [, key, value] = match;
+              if (key === "http-user-agent") headers["User-Agent"] = value;
+              else if (key === "http-referrer") headers["Referer"] = value;
+              else if (key === "http-origin") headers["Origin"] = value;
+            }
+          }
+
+          const playlistResp = await fetch(stream.direct_source, { headers });
           if (!playlistResp.ok) return new Response("Playlist resolve error", { status: 502 });
-          let playlistText = await playlistResp.text();
 
-          // Proxy linklerini güncelle
-          playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
+          const playlistText = await playlistResp.text();
 
-          // M3U8 playlist olarak dön
           return new Response(playlistText, {
             headers: { "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8" }
           });
