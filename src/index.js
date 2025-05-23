@@ -54,11 +54,10 @@ function m3uToJsonAndCategories(text) {
 }
 
 async function auth(username, password, env) {
-  // users.json anonim erişime açıksa header olmadan fetch yap
-  const usersResp = await fetch(USERS_URL);
+  const ghHeader = { Authorization: `Bearer ${env.GH_TOKEN}` };
+  const usersResp = await fetch(USERS_URL, { headers: ghHeader });
   if (!usersResp.ok) throw new Error("User list error");
   const users = await usersResp.json();
-
   const user = Object.values(users).find(u => u.username === username && u.password === password);
   if (!user) return { ok: false, code: 403 };
   if (Date.now() > Date.parse(user.expire_date)) return { ok: false, code: 402, exp: user.expire_date };
@@ -86,7 +85,8 @@ export default {
           return new Response("Invalid login", { status: authRes.code });
         }
 
-        const m3uResp = await fetch(M3U_URL);
+        const ghHeader = { Authorization: `Bearer ${env.GH_TOKEN}` };
+        const m3uResp = await fetch(M3U_URL, { headers: ghHeader });
         if (!m3uResp.ok) return new Response("Upstream error", { status: 502 });
 
         return new Response(await m3uResp.text(), {
@@ -103,7 +103,8 @@ export default {
         const authRes = await auth(username, password, env);
         if (!authRes.ok) return new Response("[]", { status: authRes.code });
 
-        const m3uResp = await fetch(M3U_URL);
+        const ghHeader = { Authorization: `Bearer ${env.GH_TOKEN}` };
+        const m3uResp = await fetch(M3U_URL, { headers: ghHeader });
         if (!m3uResp.ok) return new Response("[]", { status: 502 });
         const text = await m3uResp.text();
 
@@ -144,6 +145,7 @@ export default {
         }
 
         if (action === "get_live_streams") {
+          // Her stream'in direct_source linkini alıp proxy ve sadece ilk segmentin linkini al
           const updatedStreams = await Promise.all(streams.map(async (stream) => {
             try {
               const playlistResp = await fetch(stream.direct_source);
@@ -151,7 +153,7 @@ export default {
 
               let playlistText = await playlistResp.text();
 
-              // Proxy linkleri varsa güncelle (isteğe bağlı)
+              // Proxy linklerini güncelle
               playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
 
               const lines = playlistText.split(/\r?\n/);
@@ -191,12 +193,15 @@ export default {
           const stream = streams.find(s => s.stream_id === streamId);
           if (!stream) return new Response("Not Found", { status: 404 });
 
+          // Orijinal playlist'i çek
           const playlistResp = await fetch(stream.direct_source);
           if (!playlistResp.ok) return new Response("Playlist resolve error", { status: 502 });
           let playlistText = await playlistResp.text();
 
+          // Proxy linklerini güncelle
           playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-proxy.hf.space$1");
 
+          // M3U8 playlist olarak dön
           return new Response(playlistText, {
             headers: { "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8" }
           });
