@@ -35,6 +35,7 @@ function m3uToJsonAndCategories(text) {
         category_id: String(categoriesMap[categoryName]),
         tv_archive: "0",
         direct_source: url.trim(),
+        stream_url: url.trim(),
         vlc_opts: vlcOpts,
         container_extension: "m3u8"
       });
@@ -66,7 +67,8 @@ async function auth(username, password, env) {
 export default {
   async fetch(request, env) {
     try {
-      const { pathname, searchParams, host } = new URL(request.url);
+      const { pathname, searchParams, hostname } = new URL(request.url);
+      const host = hostname;
 
       if (pathname === "/get.php") {
         const username = searchParams.get("username");
@@ -78,7 +80,7 @@ export default {
         const authRes = await auth(username, password, env);
         if (!authRes.ok) {
           if (authRes.code === 402)
-            return new Response("#EXTM3U\n#EXTINF:-1,Abonelik süresi doldu\n", {
+            return new Response("#EXTM3U\n#EXTINF:-1,Abonelik süre doldu\n", {
               headers: { "Content-Type": "text/plain; charset=utf-8" }
             });
           return new Response("Invalid login", { status: authRes.code });
@@ -123,7 +125,7 @@ export default {
               max_connections: 1
             },
             server_info: {
-              url: new URL(request.url).hostname,
+              url: host,
               port: 80,
               https_port: 443,
               server_protocol: "http",
@@ -145,9 +147,11 @@ export default {
 
         if (action === "get_live_streams") {
           const updatedStreams = streams.map(stream => {
+            const streamUrl = `https://${host}/player_api.php?username=${username}&password=${password}&action=stream&stream_id=${stream.stream_id}.m3u8`;
             return {
               ...stream,
-              stream_url: `https://${new URL(request.url).host}/player_api.php?username=${username}&password=${password}&action=stream&stream_id=${stream.stream_id}.m3u8`
+              direct_source: streamUrl,
+              stream_url: streamUrl
             };
           });
 
@@ -157,8 +161,7 @@ export default {
         }
 
         if (action === "stream") {
-          const streamIdRaw = searchParams.get("stream_id");
-          const streamId = parseInt(streamIdRaw);
+          const streamId = parseInt(searchParams.get("stream_id"));
           if (isNaN(streamId)) return new Response("Missing stream_id", { status: 400 });
 
           const stream = streams.find(s => s.stream_id === streamId);
@@ -170,22 +173,7 @@ export default {
 
           playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-zeroipday.hf.space$1");
 
-          const lines = playlistText.split(/\r?\n/);
-          const segmentIndex = lines.findIndex(line => line.startsWith("#EXTINF"));
-          let realLink = "";
-          if (segmentIndex !== -1 && lines[segmentIndex + 1]) {
-            const candidate = lines[segmentIndex + 1].trim();
-            if (candidate.startsWith("http")) {
-              realLink = candidate;
-            }
-          }
-
-          const m3u8 = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=800000
-${realLink}`;
-
-          return new Response(m3u8, {
+          return new Response(playlistText, {
             headers: { "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8" }
           });
         }
