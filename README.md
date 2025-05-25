@@ -1,1 +1,1 @@
-# denemeler2
+# get.php çalışıyor,  player_api calismiyor 
