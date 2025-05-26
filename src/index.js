@@ -30,14 +30,15 @@ function m3uToJsonAndCategories(text) {
         num: streams.length + 1,
         name,
         stream_type: "live",
-        stream_id: streams.length + 100,
+        stream_id: streams.length + 100,  // stream_id 100’den başlasın
         stream_icon: icon,
         category_id: String(categoriesMap[categoryName]),
         tv_archive: "0",
         direct_source: url.trim(),
         stream_url: url.trim(),
         vlc_opts: vlcOpts,
-        container_extension: "m3u8"
+        container_extension: "m3u8",
+        url: url.trim(),
       });
 
       i = j;
@@ -64,13 +65,36 @@ async function auth(username, password, env) {
   return { ok: true, exp: user.expire_date };
 }
 
+async function getTsSegmentsProxied(m3u8url, env, host) {
+  // m3u8 dosyasını proxy üzerinden çek
+  const proxyUrl = `https://${host}/proxy/m3u?url=${encodeURIComponent(m3u8url)}`;
+  const resp = await fetch(proxyUrl);
+  if (!resp.ok) throw new Error("Failed to fetch proxied m3u8");
+  const text = await resp.text();
+
+  // TS segment URL'lerini ayrıştır
+  const lines = text.split(/\r?\n/);
+  const segments = lines.filter(line => line && !line.startsWith("#")).map(line => {
+    // mutlak değilse m3u8url baz alınarak tam URL yap
+    if (line.startsWith("http")) return `https://${host}/proxy/ts?url=${encodeURIComponent(line)}`;
+    // göreceli linkleri baz URL ile tamamla
+    try {
+      const baseUrl = new URL(m3u8url);
+      const absoluteUrl = new URL(line, baseUrl).href;
+      return `https://${host}/proxy/ts?url=${encodeURIComponent(absoluteUrl)}`;
+    } catch {
+      return line;
+    }
+  });
+  return segments;
+}
+
 export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
-      const pathname = url.pathname;
-      const searchParams = url.searchParams;
-      const host = url.hostname;
+      const { pathname, searchParams, hostname } = url;
+      const host = hostname;
 
       if (pathname === "/get.php") {
         const username = searchParams.get("username");
@@ -92,6 +116,7 @@ export default {
         const m3uResp = await fetch(M3U_URL, { headers: ghHeader });
         if (!m3uResp.ok) return new Response("Upstream error", { status: 502 });
 
+        // Direkt upstream m3u8 dosyasını olduğu gibi dön
         return new Response(await m3uResp.text(), {
           headers: { "Content-Type": "text/plain; charset=utf-8" }
         });
@@ -114,6 +139,7 @@ export default {
         const { streams, categories } = m3uToJsonAndCategories(text);
 
         if (!action) {
+          // User info, server info döndür
           const expTS = Math.floor(Date.parse(authRes.exp) / 1000);
           const nowTS = Math.floor(Date.now() / 1000);
           const payload = {
@@ -148,7 +174,7 @@ export default {
         }
 
         if (action === "get_live_streams") {
-          // Proxy url formatına çeviriyoruz.
+          // stream_url ve direct_source proxylenmiş url olacak şekilde dön
           const updatedStreams = streams.map(stream => {
             const proxyUrl = `https://${host}/proxy/m3u?url=${encodeURIComponent(stream.direct_source)}`;
             return {
@@ -163,7 +189,22 @@ export default {
           });
         }
 
+        if (action === "get_ts_segments") {
+          const streamId = parseInt(searchParams.get("stream_id"));
+          if (isNaN(streamId)) return new Response("Missing or invalid stream_id", { status: 400 });
+
+          const stream = streams.find(s => s.stream_id === streamId);
+          if (!stream) return new Response("Stream not found", { status: 404 });
+
+          const segments = await getTsSegmentsProxied(stream.url, env, host);
+
+          return new Response(JSON.stringify(segments, null, 2), {
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
         if (action === "stream") {
+          // stream_id param ile tek kanalı proxy m3u olarak döndür
           const streamId = parseInt(searchParams.get("stream_id"));
           if (isNaN(streamId)) return new Response("Missing stream_id", { status: 400 });
 
@@ -181,6 +222,23 @@ export default {
         }
 
         return new Response("[]", { headers: { "Content-Type": "application/json" } });
+      }
+
+      if (pathname.startsWith("/proxy/")) {
+        // Burada proxy ile ilgili işlemler olabilir
+        // Örneğin /proxy/m3u?url= veya /proxy/ts?url= için basit fetch proxy
+        const proxiedUrl = searchParams.get("url");
+        if (!proxiedUrl) return new Response("Missing url", { status: 400 });
+
+        const fetchResp = await fetch(proxiedUrl);
+        if (!fetchResp.ok) return new Response("Upstream fetch failed", { status: 502 });
+
+        // İçeriğe göre Content-Type ayarla
+        const contentType = fetchResp.headers.get("content-type") || "application/octet-stream";
+
+        return new Response(fetchResp.body, {
+          headers: { "Content-Type": contentType }
+        });
       }
 
       return new Response("Not Found", { status: 404 });
