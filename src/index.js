@@ -147,11 +147,11 @@ export default {
 
         if (action === "get_live_streams") {
           const updatedStreams = streams.map(stream => {
-            const streamUrl = `https://${host}/player_api.php?username=${username}&password=${password}&action=stream&stream_id=${stream.stream_id}`;
+            const proxyUrl = `https://${host}/proxy/m3u?url=${encodeURIComponent(stream.direct_source)}`;
             return {
               ...stream,
-              direct_source: streamUrl,
-              stream_url: streamUrl
+              direct_source: proxyUrl,
+              stream_url: proxyUrl
             };
           });
 
@@ -167,11 +167,10 @@ export default {
           const stream = streams.find(s => s.stream_id === streamId);
           if (!stream) return new Response("Not Found", { status: 404 });
 
-          const playlistResp = await fetch(stream.direct_source);
+          const proxyUrl = `https://${host}/proxy/m3u?url=${encodeURIComponent(stream.direct_source)}`;
+          const playlistResp = await fetch(proxyUrl);
           if (!playlistResp.ok) return new Response("Playlist resolve error", { status: 502 });
-          let playlistText = await playlistResp.text();
-
-          playlistText = playlistText.replace(/(\/proxy\/ts\?[^ \n\r]*)/g, "https://zeroipday-zeroipday.hf.space$1");
+          const playlistText = await playlistResp.text();
 
           return new Response(playlistText, {
             headers: { "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8" }
