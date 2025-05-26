@@ -67,8 +67,10 @@ async function auth(username, password, env) {
 export default {
   async fetch(request, env) {
     try {
-      const { pathname, searchParams, hostname } = new URL(request.url);
-      const host = hostname;
+      const url = new URL(request.url);
+      const pathname = url.pathname;
+      const searchParams = url.searchParams;
+      const host = url.hostname;
 
       if (pathname === "/get.php") {
         const username = searchParams.get("username");
@@ -146,6 +148,7 @@ export default {
         }
 
         if (action === "get_live_streams") {
+          // Proxy url formatına çeviriyoruz.
           const updatedStreams = streams.map(stream => {
             const proxyUrl = `https://${host}/proxy/m3u?url=${encodeURIComponent(stream.direct_source)}`;
             return {
